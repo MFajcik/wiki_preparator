@@ -14,35 +14,8 @@ from nltk.corpus.reader import wordnet
 from nltk.stem.wordnet import WordNetLemmatizer
 import spacy
 
-# Script expects an input corpus recieved from wiki extractor
-# Corpus still containst basic tags out of context (sentence) words
-# i.e. at the start of each paragraph
-# </doc>
-# <doc id="39" revid="30540869" url="https://en.wikipedia.org/wiki?curid=39" title="Albedo">
-# Albedo
-#
-# Albedo () (, meaning "whiteness") is the measure of the diffuse reflection of solar radiation
-
 from nlpfit.preprocessing.preprocessor import preprocess_file
 
-config = configparser.ConfigParser()
-config.read(sys.argv[1])
-
-corpus_path = config["Data"]["in_path"]
-output = config["Data"]["out_path"]
-stopWords = set(stopwords.words('english'))
-punctuation = list(string.punctuation) + ["``", "''"]
-#
-# nltk.download('stopwords')
-# nltk.download('punkt')
-# nltk.download('averaged_perceptron_tagger')
-# nltk.download('wordnet')
-# Remove
-# <doc tags>
-# article title
-# sentences in parantheses
-r_remove_doctags_and_title = r"(<doc.*>(\n)*(\w+)(\n)*)|(</doc>)"
-rgx_remove_doctags_and_title = re.compile(r_remove_doctags_and_title)
 
 # Deprecated, this is too slow
 def wiki_text_processor_nltk(chunk: str, tools, opts, logger, wordcounter) -> (str, dict):
@@ -84,10 +57,6 @@ def wiki_text_processor_nltk(chunk: str, tools, opts, logger, wordcounter) -> (s
     return processed_chunk, wordcounter
 
 
-nlp = spacy.load('en')
-nlp.add_pipe(nlp.create_pipe('sentencizer'))
-
-
 def wiki_text_processor_spacy(chunk: str, tools, opts, logger, wordcounter) -> (str, dict):
     processed_chunk = ""
     chunk = rgx_remove_doctags_and_title.sub("", chunk)
@@ -96,9 +65,9 @@ def wiki_text_processor_spacy(chunk: str, tools, opts, logger, wordcounter) -> (
         for w in sentence:
             # Some phrases are automatically tokenized by Spacy
             # i.e. New York, in that case we want New_York in our dictionary
-            word ="_".join(w.text.split())
+            word = "_".join(w.text.split())
 
-            if word.isspace() or word=="":
+            if word.isspace() or word == "":
                 continue
             if opts.remove_stop_words and word.lower() in stopWords:
                 continue
@@ -145,7 +114,7 @@ def get_wordnet_pos(treebank_tag):
 
 # 10485760
 def en_worker(idx, s_offset, e_offset, tmpdir, opts, logger, chunk_size=1000000,
-              text_processor=wiki_text_processor_nltk):
+              text_processor=wiki_text_processor_nltk, num_of_processes=None):
     ofilename = "{}_".format(idx) + os.path.basename(opts.ofile) if opts.ofile else None
     wordcounter = Counter() if opts.count_words else None
 
@@ -163,10 +132,11 @@ def en_worker(idx, s_offset, e_offset, tmpdir, opts, logger, chunk_size=1000000,
                 for chunk in read_word_chunks(opts.ifile, chunk_size, s_offset, e_offset):
                     preprocessed, wordcounter = text_processor(chunk, preprocessing_tools, opts, logger, wordcounter)
                     of.write(preprocessed)
-                    processed_so_far += chunk_size
-                    delta = starttime - time.time()
-                    print("\r Processing speed {} kB/s".format(
-                        processed_so_far / delta / 1e3 * int(config["Options"]["processes"])))
+                    if num_of_processes is not None:
+                        processed_so_far += chunk_size
+                        delta = time.time() - starttime
+                        print("\r Processing speed ~{} kB/s".format(
+                            processed_so_far / delta / 1e3 * num_of_processes))
         else:
             with open(os.path.join(tmpdir, ofilename), mode="w") as of:
                 for chunk in read_word_chunks(opts.ifile, chunk_size, s_offset, e_offset):
@@ -182,28 +152,60 @@ def str_to_bool(i):
     return i == "True" or i == "true" or i == "T" or i == "t" or i == "1"
 
 
-print("Lemmatize: {}".format(str_to_bool(config["Options"]["lemmatize"])))
-print("remove_stop_words: {}".format(str_to_bool(config["Options"]["remove_stop_words"])))
-print("remove_punct: {}".format(str_to_bool(config["Options"]["remove_punct"])))
-print("postag_words: {}".format(str_to_bool(config["Options"]["postag_words"])))
-time_taken, wordcounter = preprocess_file(corpus_path, output,
-                                          count_words=True,
-                                          text_processor=wiki_text_processor_spacy,  # wiki_text_processor_nltk,
-                                          process_worker=en_worker,
-                                          num_of_processes=int(config["Options"]["processes"]),
-                                          lemmatize_words=str_to_bool(config["Options"]["lemmatize"]),
-                                          remove_stop_words=str_to_bool(config["Options"]["remove_stop_words"]),
-                                          remove_puncuation=str_to_bool(config["Options"]["remove_punct"]),
-                                          postag_words=str_to_bool(config["Options"]["postag_words"]),
-                                          tmpdir=config["Options"]["tm_folder_name"])
+# Script expects an input corpus recieved from wiki extractor
+# Corpus still containst basic tags out of context (sentence) words
+# i.e. at the start of each paragraph
+# </doc>
+# <doc id="39" revid="30540869" url="https://en.wikipedia.org/wiki?curid=39" title="Albedo">
+# Albedo
+#
+# Albedo () (, meaning "whiteness") is the measure of the diffuse reflection of solar radiation
 
-import operator
+if __name__ == "__main__":
+    nlp = spacy.load('en')
+    nlp.add_pipe(nlp.create_pipe('sentencizer'))
 
-wordcounter_l = sorted(wordcounter.items(), key=operator.itemgetter(1), reverse=True)
+    config = configparser.ConfigParser()
+    config.read(sys.argv[1])
 
-with open(config["Data"]["vocab"], 'w') as outf:
-    for key, value in wordcounter_l:
-        outf.write("%s %d\n" % (key, value))
+    corpus_path = config["Data"]["in_path"]
+    output = config["Data"]["out_path"]
+    stopWords = set(stopwords.words('english'))
+    punctuation = list(string.punctuation) + ["``", "''"]
+    #
+    # nltk.download('stopwords')
+    # nltk.download('punkt')
+    # nltk.download('averaged_perceptron_tagger')
+    # nltk.download('wordnet')
+    # Remove
+    # <doc tags>
+    # article title
+    # sentences in parantheses
+    r_remove_doctags_and_title = r"(<doc.*>(\n)*(\w+)(\n)*)|(</doc>)"
+    rgx_remove_doctags_and_title = re.compile(r_remove_doctags_and_title)
 
-with open(config["Data"]["statistics_f"], 'w') as outf:
-    outf.write("Total number of words: {}".format(sum(wordcounter.values())))
+    print("Lemmatize: {}".format(str_to_bool(config["Options"]["lemmatize"])))
+    print("remove_stop_words: {}".format(str_to_bool(config["Options"]["remove_stop_words"])))
+    print("remove_punct: {}".format(str_to_bool(config["Options"]["remove_punct"])))
+    print("postag_words: {}".format(str_to_bool(config["Options"]["postag_words"])))
+    time_taken, wordcounter = preprocess_file(corpus_path, output,
+                                              count_words=True,
+                                              text_processor=wiki_text_processor_spacy,  # wiki_text_processor_nltk,
+                                              process_worker=en_worker,
+                                              num_of_processes=int(config["Options"]["processes"]),
+                                              lemmatize_words=str_to_bool(config["Options"]["lemmatize"]),
+                                              remove_stop_words=str_to_bool(config["Options"]["remove_stop_words"]),
+                                              remove_puncuation=str_to_bool(config["Options"]["remove_punct"]),
+                                              postag_words=str_to_bool(config["Options"]["postag_words"]),
+                                              tmpdir=config["Options"]["tm_folder_name"])
+
+    import operator
+
+    wordcounter_l = sorted(wordcounter.items(), key=operator.itemgetter(1), reverse=True)
+
+    with open(config["Data"]["vocab"], 'w') as outf:
+        for key, value in wordcounter_l:
+            outf.write("%s %d\n" % (key, value))
+
+    with open(config["Data"]["statistics_f"], 'w') as outf:
+        outf.write("Total number of words: {}".format(sum(wordcounter.values())))
